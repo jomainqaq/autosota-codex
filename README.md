@@ -48,18 +48,6 @@ openrouter_api_key: ""
 Replace `research_api_key` with your real key. Replace `research_base_url`
 with your OpenAI-compatible endpoint and keep the `/v1` suffix.
 
-## Do Not Commit Local Runtime Files
-
-Keep these local-only files out of public repositories:
-
-- `config.yaml`
-- `.env*`
-- `.autosota/`
-- `logs/`
-- `optimized_code/`
-- `node_modules/`
-- `*.tgz`
-
 ## Release Files
 
 Each GitHub Release should attach:
