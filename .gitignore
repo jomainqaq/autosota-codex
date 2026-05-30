@@ -1,0 +1,14 @@
+*.tgz
+SHA256SUMS.txt
+node_modules/
+.autosota/
+logs/
+optimized_code/
+config.yaml
+.env
+.env.*
+__pycache__/
+*.pyc
+npm-debug.log*
+.DS_Store
+
