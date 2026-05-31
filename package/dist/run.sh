@@ -732,6 +732,23 @@ def as_float(value):
     except (TypeError, ValueError):
         return None
 
+def has_value(data, key):
+    return key in data and data.get(key) is not None
+
+def normalize_direction(value):
+    if value is None:
+        return None
+    raw = str(value).strip().lower()
+    if raw in ("higher", "high", "maximize", "max", "greater", "larger", "up", "true"):
+        return "higher"
+    if raw in ("lower", "low", "minimize", "min", "less", "smaller", "down", "false"):
+        return "lower"
+    if raw.startswith("higher") or raw.startswith("max"):
+        return "higher"
+    if raw.startswith("lower") or raw.startswith("min"):
+        return "lower"
+    raise SystemExit(f"[Inputs] ERROR: unsupported metric_direction in target.md: {value!r}. Use higher or lower.")
+
 def front_matter(text):
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -742,10 +759,12 @@ def front_matter(text):
             return data if isinstance(data, dict) else {}
     return {}
 
-def metric_direction_lower():
-    direction = str(cfg.get("metric_direction") or "lower").lower()
+def metric_direction_lower(fm=None):
+    direction = str(cfg.get("metric_direction") or "lower").strip().lower()
     lower_is_better = not direction.startswith("higher")
-    if "lower_is_better" in cfg:
+    if fm and has_value(fm, "lower_is_better"):
+        lower_is_better = bool(fm.get("lower_is_better"))
+    elif "lower_is_better" in cfg:
         lower_is_better = bool(cfg.get("lower_is_better"))
     return lower_is_better
 
@@ -758,12 +777,54 @@ def plausible_values(values, baseline, lower_is_better):
         preferred = [v for v in values if v >= abs(baseline) * 0.5]
     return preferred or values
 
-def extract_target(text):
+def sync_target_metric_fields(fm):
+    global changed
+    if not fm:
+        return
+
+    if has_value(fm, "primary_metric"):
+        primary = str(fm.get("primary_metric")).strip()
+        if primary and cfg.get("primary_metric") != primary:
+            cfg["primary_metric"] = primary
+            changed = True
+        if primary:
+            print(f"[Inputs] primary_metric set from target.md: {primary}")
+
+    if has_value(fm, "metric_direction"):
+        direction = normalize_direction(fm.get("metric_direction"))
+        if cfg.get("metric_direction") != direction:
+            cfg["metric_direction"] = direction
+            changed = True
+        if has_value(fm, "lower_is_better"):
+            lower_is_better = bool(fm.get("lower_is_better"))
+            if cfg.get("lower_is_better") != lower_is_better:
+                cfg["lower_is_better"] = lower_is_better
+                changed = True
+        elif "lower_is_better" in cfg:
+            cfg.pop("lower_is_better", None)
+            changed = True
+        print(f"[Inputs] metric_direction set from target.md: {direction}")
+
+    bounds_changed = False
+    for key in ("metric_lower_bound", "metric_upper_bound"):
+        if has_value(fm, key):
+            value = as_float(fm.get(key))
+            if value is None:
+                raise SystemExit(f"[Inputs] ERROR: {key} in target.md must be numeric.")
+            if cfg.get(key) != value:
+                cfg[key] = value
+                changed = True
+            bounds_changed = True
+    if bounds_changed:
+        lower = cfg.get("metric_lower_bound")
+        upper = cfg.get("metric_upper_bound")
+        print(f"[Inputs] metric bounds set from target.md: [{lower}, {upper}]")
+
+def extract_target(text, fm):
     primary = str(cfg.get("primary_metric") or "").strip()
     baselines = cfg.get("baseline_metrics") or {}
     baseline = as_float(baselines.get(primary)) if primary else None
-    lower_is_better = metric_direction_lower()
-    fm = front_matter(text)
+    lower_is_better = metric_direction_lower(fm)
 
     pct_override = as_float(fm.get("target_improvement_pct")) if fm else None
     fm_target_value = as_float(fm.get("target_value")) if fm else None
@@ -857,9 +918,11 @@ def extract_target(text):
 target_path = resolve_workspace_path(target_path_arg)
 target_snapshot = snapshot_dir / "target.md"
 target_text = ""
+target_fm = {}
 if target_path and target_path.is_file():
     manifest["target"] = copy_if_file(target_path, target_snapshot)
     target_text = target_snapshot.read_text(encoding="utf-8")
+    target_fm = front_matter(target_text)
 
 priors_dir = resolve_workspace_path(priors_dir_arg)
 for name in ("references.md", "ideas.md", "directions.md"):
@@ -911,10 +974,17 @@ if repo_arg and not re.match(r"^(https?://|git@)", repo_arg):
 cfg["input_snapshot_dir"] = str(snapshot_dir)
 changed = True
 
+if manifest["target"] is not None:
+    sync_target_metric_fields(target_fm)
+    if manifest["target"]:
+        cfg["target_source"] = str(target_path)
+        cfg["target_source_sha256"] = manifest["target"]["source_sha256"]
+        changed = True
+
 if cli_target_pct:
     print(f"[Inputs] target from CLI --target-pct: {cli_target_pct}")
 elif manifest["target"] is not None:
-    parsed = extract_target(target_text)
+    parsed = extract_target(target_text, target_fm)
     if parsed is None:
         raise SystemExit(
             "[Inputs] ERROR: target.md exists but no unambiguous numeric target was found. "
@@ -927,9 +997,8 @@ elif manifest["target"] is not None:
     if parsed["target_improvement_pct"] is not None:
         cfg["target_improvement_pct"] = round(parsed["target_improvement_pct"], 6)
         changed = True
-    if manifest["target"]:
-        cfg["target_source"] = str(target_path)
-        cfg["target_source_sha256"] = manifest["target"]["source_sha256"]
+    elif "target_improvement_pct" in cfg:
+        cfg.pop("target_improvement_pct", None)
         changed = True
 
     metric = parsed["primary_metric"] or "primary_metric"
@@ -939,7 +1008,7 @@ elif manifest["target"] is not None:
     if parsed["target_improvement_pct"] is not None:
         print(f"[Inputs] target_improvement_pct set to: {parsed['target_improvement_pct']:.2f}")
     else:
-        print("[Inputs] target_improvement_pct unchanged because baseline_metrics is missing or zero")
+        print("[Inputs] target_improvement_pct cleared because baseline_metrics is missing or zero")
     if parsed.get("source_line"):
         print(f"[Inputs] target source line: {parsed['source_line']}")
 else:
@@ -949,6 +1018,8 @@ manifest["effective_config"] = {
     "repo_path": cfg.get("repo_path"),
     "primary_metric": cfg.get("primary_metric"),
     "metric_direction": cfg.get("metric_direction"),
+    "metric_lower_bound": cfg.get("metric_lower_bound"),
+    "metric_upper_bound": cfg.get("metric_upper_bound"),
     "target_value": cfg.get("target_value"),
     "target_improvement_pct": cfg.get("target_improvement_pct"),
 }
