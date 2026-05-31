@@ -777,10 +777,54 @@ def plausible_values(values, baseline, lower_is_better):
         preferred = [v for v in values if v >= abs(baseline) * 0.5]
     return preferred or values
 
+def stale_metric_text(text, old_primary, new_primary):
+    if text is None:
+        return False
+    lowered = str(text).lower()
+    old_lower = (old_primary or "").lower()
+    new_lower = (new_primary or "").lower()
+    if old_lower and old_lower != new_lower and old_lower in lowered:
+        return True
+    if new_lower and "external" in new_lower and "external validation" in lowered:
+        blockers = (
+            "must not drive",
+            "must not be used",
+            "do not drive",
+            "do not use",
+            "not drive selection",
+            "not drive target",
+        )
+        return any(phrase in lowered for phrase in blockers)
+    if new_lower and new_lower not in lowered:
+        stale_intent = (
+            "primary metric",
+            "target check",
+            "target checks",
+            "drive selection",
+            "tune only",
+            "optimize only",
+            "selection metric",
+        )
+        return any(phrase in lowered for phrase in stale_intent)
+    return False
+
+def clear_stale_metric_text_fields(old_primary, new_primary):
+    global changed
+    if not new_primary:
+        return
+    for key in ("eval_output_format", "known_levers"):
+        if key in cfg and stale_metric_text(cfg.get(key), old_primary, new_primary):
+            cfg.pop(key, None)
+            changed = True
+            print(f"[Inputs] {key} cleared because it conflicted with target.md primary_metric: {new_primary}")
+
 def sync_target_metric_fields(fm):
     global changed
     if not fm:
         return
+
+    old_primary = str(cfg.get("primary_metric") or "").strip()
+    new_primary = old_primary
 
     if has_value(fm, "primary_metric"):
         primary = str(fm.get("primary_metric")).strip()
@@ -788,7 +832,10 @@ def sync_target_metric_fields(fm):
             cfg["primary_metric"] = primary
             changed = True
         if primary:
+            new_primary = primary
+        if primary:
             print(f"[Inputs] primary_metric set from target.md: {primary}")
+    clear_stale_metric_text_fields(old_primary, new_primary)
 
     if has_value(fm, "metric_direction"):
         direction = normalize_direction(fm.get("metric_direction"))
