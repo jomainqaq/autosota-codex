@@ -111,31 +111,36 @@ PYEOF
         return 0
     fi
 
-    # Checkout _best if tag exists
-    local tag_ok
-    tag_ok=$(git -C "${repo_path}" rev-parse --verify _best >/dev/null 2>&1 && echo YES || echo NO)
-
-    if [ "${tag_ok}" = "YES" ]; then
-        git -C "${repo_path}" checkout _best --quiet 2>/dev/null || true
-        echo "[Export] Checked out _best in ${repo_path}"
-    else
-        echo "[Export] WARNING: _best tag not found — exporting current HEAD"
+    if ! git -C "${repo_path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[Export] ${repo_path} is not a git worktree — skipping export."
+        return 0
     fi
 
-    # Parse best summary from scores.jsonl
+    # Parse best summary and commit from scores.jsonl before touching repo state.
     local scores_path="${DATA_DIR}/papers/${paper_name}/runs/latest/results/scores.jsonl"
+    local results_dir="${DATA_DIR}/papers/${paper_name}/runs/latest/results"
     local best_summary="n/a"
+    local best_commit=""
     if [ -f "${scores_path}" ]; then
-        best_summary=$(python3 - "${scores_path}" "${config_path}" <<'PYEOF'
+        local best_info
+        best_info=$(python3 - "${scores_path}" "${config_path}" <<'PYEOF'
 import json, sys
 
 import yaml
 
-lines = [l.strip() for l in open(sys.argv[1]) if l.strip()]
-records = [json.loads(l) for l in lines]
+records = []
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        records.append(json.loads(line))
+    except json.JSONDecodeError:
+        pass
 ok = [r for r in records if r.get("status") == "success" and r.get("primary_metric") is not None]
 if not ok:
     print("n/a")
+    print("")
     sys.exit(0)
 bl = next((r for r in records if r.get("idea_id") == "baseline"), None)
 if bl:
@@ -156,20 +161,65 @@ if bl:
     else:
         print(f"{best.get('idea_title','?')} ({raw_delta:+.4g})")
 else:
-    print(ok[-1].get("idea_title", "n/a"))
+    best = ok[-1]
+    print(best.get("idea_title", "n/a"))
+print(best.get("commit") or "")
 PYEOF
         ) || true
+        best_summary=$(printf '%s\n' "${best_info}" | sed -n '1p')
+        best_commit=$(printf '%s\n' "${best_info}" | sed -n '2p')
+    fi
+
+    local export_commit=""
+    if [ -n "${best_commit}" ] && git -C "${repo_path}" cat-file -e "${best_commit}^{commit}" 2>/dev/null; then
+        export_commit="${best_commit}"
+    elif git -C "${repo_path}" rev-parse --verify _best >/dev/null 2>&1; then
+        export_commit=$(git -C "${repo_path}" rev-parse _best^{commit})
+        echo "[Export] WARNING: best score commit unavailable — exporting _best."
+    else
+        export_commit=$(git -C "${repo_path}" rev-parse HEAD)
+        echo "[Export] WARNING: _best tag not found — exporting current HEAD."
+    fi
+
+    local repo_real export_parent_real export_real
+    repo_real=$(cd "${repo_path}" && pwd -P)
+    mkdir -p "${out_root}"
+    export_parent_real=$(cd "$(dirname "${export_dir}")" && pwd -P)
+    export_real="${export_parent_real}/$(basename "${export_dir}")"
+    if [ "${export_real}" = "${repo_real}" ]; then
+        echo "[Export] Refusing to overwrite repo_path with export_dir: ${export_dir}"
+        return 0
     fi
 
     rm -rf "${export_dir}"
-    if cp -a "${repo_path}" "${export_dir}" 2>/dev/null; then
-        echo "[Export] ✓ copied repo → ${export_dir}"
+    mkdir -p "${export_dir}"
+    if git -C "${repo_path}" archive --format=tar "${export_commit}" | tar -x -C "${export_dir}"; then
+        rm -rf \
+            "${export_dir}/.autosota" \
+            "${export_dir}/logs" \
+            "${export_dir}/optimized_code" \
+            "${export_dir}/.autosota_protected_hashes.json"
+        echo "[Export] ✓ archived ${export_commit:0:10} → ${export_dir}"
     else
-        echo "[Export]   copy failed (non-fatal)"
+        echo "[Export] ERROR: failed to archive ${export_commit:0:10}"
+        return 1
+    fi
+
+    local submodules
+    submodules=$(git -C "${repo_path}" ls-tree -r "${export_commit}" 2>/dev/null | awk '$1 == "160000" {print $4}' || true)
+    if [ -n "${submodules}" ]; then
+        echo "[Export] WARNING: exported commit contains gitlink/submodule path(s):"
+        printf '%s\n' "${submodules}" | sed 's/^/[Export]   - /'
+    fi
+
+    if [ -d "${results_dir}" ]; then
+        mkdir -p "${export_dir}/autosota_results"
+        cp -a "${results_dir}/." "${export_dir}/autosota_results/" 2>/dev/null || true
+        echo "[Export] ✓ run artifacts → ${export_dir}/autosota_results/"
     fi
 
     local diff_out="${export_dir}/final_patch.diff"
-    git -C "${repo_path}" diff _baseline _best -- 2>/dev/null > "${diff_out}" || true
+    git -C "${repo_path}" diff _baseline "${export_commit}" -- 2>/dev/null > "${diff_out}" || true
     if [ -s "${diff_out}" ]; then
         echo "[Export] ✓ patch diff  → ${diff_out}"
     fi

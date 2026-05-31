@@ -14,7 +14,8 @@
 #       --notes   "<optional notes>"
 #
 # What it does:
-#   1. git add -A && git commit (captures the current working-tree state as a real commit)
+#   1. git add -A with autosota runtime exclusions && git commit
+#      (captures the current code state as a real commit)
 #   2. Reads the real commit hash via git rev-parse HEAD
 #   3. On success AND improvement: moves the _best tag to this commit
 #   4. Appends one JSON line to scores.jsonl with the real hash
@@ -182,9 +183,28 @@ cd "$REPO_ROOT"
 git config user.name  "optimizer" 2>/dev/null || true
 git config user.email "opt@local" 2>/dev/null || true
 
-if [[ "$ALREADY_RECORDED" == "false" ]]; then
-  # Stage all changes and commit (--allow-empty in case nothing changed)
+ensure_autosota_git_excludes() {
+  local exclude_file
+  exclude_file="$(git rev-parse --git-path info/exclude 2>/dev/null || true)"
+  [[ -n "$exclude_file" ]] || return 0
+  mkdir -p "$(dirname "$exclude_file")"
+  touch "$exclude_file"
+  local pattern
+  for pattern in ".autosota/" "logs/" "optimized_code/" ".autosota_protected_hashes.json"; do
+    grep -Fxq "$pattern" "$exclude_file" || printf '%s\n' "$pattern" >> "$exclude_file"
+  done
+}
+
+git_add_code_state() {
   git add -A
+  git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
+}
+
+ensure_autosota_git_excludes
+
+if [[ "$ALREADY_RECORDED" == "false" ]]; then
+  # Stage code changes and commit (--allow-empty in case nothing changed).
+  git_add_code_state
   COMMIT_MSG="iter-${ITER}: ${TITLE} [${STATUS}]"
   git commit -q -m "$COMMIT_MSG" --allow-empty
   COMMIT_HASH=$(git rev-parse HEAD)

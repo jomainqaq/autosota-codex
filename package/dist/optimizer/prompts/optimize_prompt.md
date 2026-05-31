@@ -90,7 +90,14 @@ echo '[Tools] record_score.sh installed at {REPO_PATH}/tools/record_score.sh'
 cd "{REPO_PATH}"
 git rev-parse --git-dir 2>/dev/null && echo 'git already init' || git init -q
 git config user.name optimizer && git config user.email opt@local
+EXCLUDE_FILE="$(git rev-parse --git-path info/exclude)"
+touch "$EXCLUDE_FILE"
+grep -Fxq ".autosota/" "$EXCLUDE_FILE" || printf '%s\n' ".autosota/" >> "$EXCLUDE_FILE"
+grep -Fxq "logs/" "$EXCLUDE_FILE" || printf '%s\n' "logs/" >> "$EXCLUDE_FILE"
+grep -Fxq "optimized_code/" "$EXCLUDE_FILE" || printf '%s\n' "optimized_code/" >> "$EXCLUDE_FILE"
+grep -Fxq ".autosota_protected_hashes.json" "$EXCLUDE_FILE" || printf '%s\n' ".autosota_protected_hashes.json" >> "$EXCLUDE_FILE"
 git add -A
+git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
 git commit -q -m 'baseline' --allow-empty
 git tag -f _baseline
 echo '[Git] Baseline snapshot created. HEAD:' && git rev-parse HEAD
@@ -494,6 +501,7 @@ Then proceed to **② SNAPSHOT** below.
 cd "{REPO_PATH}"
 git config user.name optimizer && git config user.email opt@local
 git add -A
+git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
 git commit -q -m 'pre-iter-ITERNUM: IDEA_TITLE' --allow-empty
 PRE_COMMIT=$(git rev-parse HEAD)
 git tag -f _pre_iter
@@ -575,7 +583,7 @@ Mark idea as `FAILED (could not debug)` in idea_library.md. Proceed to next iter
 
 > ⛔ **CRITICAL — NEVER SKIP THIS STEP.** Every iteration — success or failure — **MUST** end with a `record_score.sh` call. Missing this call means the iteration has no record in `scores.jsonl`, which corrupts the optimization history and the final report.
 >
-> ⛔ **Do NOT `git commit` the iteration code manually.** `record_score.sh` performs the final `git add -A && git commit` for you and captures the real commit hash. If you commit manually before calling `record_score.sh`, the hash in `scores.jsonl` will be wrong. Let `record_score.sh` do the commit.
+> ⛔ **Do NOT `git commit` the iteration code manually.** `record_score.sh` performs the final autosota-safe `git add` and `git commit` for you and captures the real commit hash. If you commit manually before calling `record_score.sh`, the hash in `scores.jsonl` will be wrong. Let `record_score.sh` do the commit.
 
 **Use `record_score.sh` — do NOT write to scores.jsonl directly.** The script performs the git commit, records the real hash, and updates the `_best` tag when `--is-best true` is passed.
 
