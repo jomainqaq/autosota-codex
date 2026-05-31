@@ -196,9 +196,8 @@ PYEOF
     if git -C "${repo_path}" archive --format=tar "${export_commit}" | tar -x -C "${export_dir}"; then
         rm -rf \
             "${export_dir}/.autosota" \
-            "${export_dir}/logs" \
-            "${export_dir}/optimized_code" \
             "${export_dir}/.autosota_protected_hashes.json"
+        printf 'autosota export\npaper=%s\ncommit=%s\n' "${paper_name}" "${export_commit}" > "${export_dir}/.autosota_export_marker"
         echo "[Export] ✓ archived ${export_commit:0:10} → ${export_dir}"
     else
         echo "[Export] ERROR: failed to archive ${export_commit:0:10}"

@@ -189,15 +189,61 @@ ensure_autosota_git_excludes() {
   [[ -n "$exclude_file" ]] || return 0
   mkdir -p "$(dirname "$exclude_file")"
   touch "$exclude_file"
+
+  # Undo the overly broad excludes written by autosota-codex 0.2.x only when
+  # the full buggy pattern set is present. Target repos may legitimately own
+  # top-level logs/ or optimized_code/ directories.
+  if grep -Fxq ".autosota/" "$exclude_file" \
+      && grep -Fxq ".autosota_protected_hashes.json" "$exclude_file" \
+      && grep -Fxq "logs/" "$exclude_file" \
+      && grep -Fxq "optimized_code/" "$exclude_file"; then
+    local tmp_file
+    tmp_file="${exclude_file}.autosota_tmp"
+    awk '$0 != "logs/" && $0 != "optimized_code/" { print }' "$exclude_file" > "$tmp_file"
+    mv "$tmp_file" "$exclude_file"
+  fi
+
   local pattern
-  for pattern in ".autosota/" "logs/" "optimized_code/" ".autosota_protected_hashes.json"; do
+  for pattern in ".autosota/" ".autosota_protected_hashes.json"; do
     grep -Fxq "$pattern" "$exclude_file" || printf '%s\n' "$pattern" >> "$exclude_file"
   done
 }
 
+derive_paper_name() {
+  python3 - "$SCORES" <<'PYEOF' 2>/dev/null || true
+from pathlib import Path
+import sys
+
+parts = Path(sys.argv[1]).parts
+for idx, part in enumerate(parts):
+    if part == "papers" and idx + 2 < len(parts) and parts[idx + 2] == "runs":
+        print(parts[idx + 1])
+        break
+PYEOF
+}
+
+unstage_autosota_artifacts() {
+  local paper_name="$1"
+  git reset -q -- .autosota .autosota_protected_hashes.json 2>/dev/null || true
+  [[ -n "$paper_name" ]] || return 0
+
+  git reset -q -- \
+    "logs/sota/${paper_name}.log" \
+    "logs/optimizer_detail/${paper_name}.log" \
+    "logs/optimizer_detail/${paper_name}_onboard.log" \
+    2>/dev/null || true
+
+  local export_dir="optimized_code/${paper_name}"
+  if [[ -f "${export_dir}/.autosota_export_marker" || -d "${export_dir}/autosota_results" ]]; then
+    git reset -q -- "${export_dir}" 2>/dev/null || true
+  fi
+}
+
 git_add_code_state() {
+  local paper_name
+  paper_name="$(derive_paper_name)"
   git add -A
-  git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
+  unstage_autosota_artifacts "$paper_name"
 }
 
 ensure_autosota_git_excludes

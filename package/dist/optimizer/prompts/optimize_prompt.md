@@ -92,12 +92,27 @@ git rev-parse --git-dir 2>/dev/null && echo 'git already init' || git init -q
 git config user.name optimizer && git config user.email opt@local
 EXCLUDE_FILE="$(git rev-parse --git-path info/exclude)"
 touch "$EXCLUDE_FILE"
+if grep -Fxq ".autosota/" "$EXCLUDE_FILE" \
+    && grep -Fxq ".autosota_protected_hashes.json" "$EXCLUDE_FILE" \
+    && grep -Fxq "logs/" "$EXCLUDE_FILE" \
+    && grep -Fxq "optimized_code/" "$EXCLUDE_FILE"; then
+  TMP_EXCLUDE="${EXCLUDE_FILE}.autosota_tmp"
+  awk '$0 != "logs/" && $0 != "optimized_code/" { print }' "$EXCLUDE_FILE" > "$TMP_EXCLUDE"
+  mv "$TMP_EXCLUDE" "$EXCLUDE_FILE"
+fi
 grep -Fxq ".autosota/" "$EXCLUDE_FILE" || printf '%s\n' ".autosota/" >> "$EXCLUDE_FILE"
-grep -Fxq "logs/" "$EXCLUDE_FILE" || printf '%s\n' "logs/" >> "$EXCLUDE_FILE"
-grep -Fxq "optimized_code/" "$EXCLUDE_FILE" || printf '%s\n' "optimized_code/" >> "$EXCLUDE_FILE"
 grep -Fxq ".autosota_protected_hashes.json" "$EXCLUDE_FILE" || printf '%s\n' ".autosota_protected_hashes.json" >> "$EXCLUDE_FILE"
+AUTOSOTA_PAPER_NAME="$(basename "$(dirname "$(dirname "{OUTPUT_DIR}")")")"
 git add -A
-git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
+git reset -q -- .autosota .autosota_protected_hashes.json \
+  "logs/sota/${AUTOSOTA_PAPER_NAME}.log" \
+  "logs/optimizer_detail/${AUTOSOTA_PAPER_NAME}.log" \
+  "logs/optimizer_detail/${AUTOSOTA_PAPER_NAME}_onboard.log" \
+  2>/dev/null || true
+AUTOSOTA_EXPORT_DIR="optimized_code/${AUTOSOTA_PAPER_NAME}"
+if [ -f "${AUTOSOTA_EXPORT_DIR}/.autosota_export_marker" ] || [ -d "${AUTOSOTA_EXPORT_DIR}/autosota_results" ]; then
+  git reset -q -- "${AUTOSOTA_EXPORT_DIR}" 2>/dev/null || true
+fi
 git commit -q -m 'baseline' --allow-empty
 git tag -f _baseline
 echo '[Git] Baseline snapshot created. HEAD:' && git rev-parse HEAD
@@ -500,8 +515,17 @@ Then proceed to **② SNAPSHOT** below.
 # Save current state as a rollback point (pre-modification snapshot)
 cd "{REPO_PATH}"
 git config user.name optimizer && git config user.email opt@local
+AUTOSOTA_PAPER_NAME="$(basename "$(dirname "$(dirname "{OUTPUT_DIR}")")")"
 git add -A
-git reset -q -- .autosota logs optimized_code .autosota_protected_hashes.json 2>/dev/null || true
+git reset -q -- .autosota .autosota_protected_hashes.json \
+  "logs/sota/${AUTOSOTA_PAPER_NAME}.log" \
+  "logs/optimizer_detail/${AUTOSOTA_PAPER_NAME}.log" \
+  "logs/optimizer_detail/${AUTOSOTA_PAPER_NAME}_onboard.log" \
+  2>/dev/null || true
+AUTOSOTA_EXPORT_DIR="optimized_code/${AUTOSOTA_PAPER_NAME}"
+if [ -f "${AUTOSOTA_EXPORT_DIR}/.autosota_export_marker" ] || [ -d "${AUTOSOTA_EXPORT_DIR}/autosota_results" ]; then
+  git reset -q -- "${AUTOSOTA_EXPORT_DIR}" 2>/dev/null || true
+fi
 git commit -q -m 'pre-iter-ITERNUM: IDEA_TITLE' --allow-empty
 PRE_COMMIT=$(git rev-parse HEAD)
 git tag -f _pre_iter
