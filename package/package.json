@@ -1,0 +1,49 @@
+{
+  "name": "autosota-codex",
+  "version": "0.2.1-codex.5",
+  "description": "Lightweight paper-to-SOTA loop: paper PDF + target metrics + local code repo to optimized model (Codex orchestration)",
+  "license": "MIT",
+  "author": "autosota contributors",
+  "homepage": "https://github.com/jomainqaq/autosota-codex#readme",
+  "bugs": {
+    "url": "https://github.com/jomainqaq/autosota-codex/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jomainqaq/autosota-codex.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "bin": {
+    "autosota": "dist/bin/autosota.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "ml",
+    "sota",
+    "optimization",
+    "codex",
+    "openai",
+    "research",
+    "automation",
+    "llm",
+    "agent"
+  ],
+  "dependencies": {
+    "@openai/codex": "*"
+  },
+  "scripts": {
+    "prepack": "node -e \"console.log('[autosota-codex] using prebuilt dist')\"",
+    "postinstall": "node -e \"try{const fs=require('fs'),p='dist/codex-shim-bin/claude'; if(fs.existsSync(p)) fs.chmodSync(p,0o755); console.log('\\n\\x1b[32m[autosota-codex]\\x1b[0m installed (Codex CLI bundled). Next steps:\\n  codex login           # or set CODEX_API_KEY\\n  autosota init         # scaffold ./config.yaml + ./paper/\\n  autosota doctor       # verify python3, Codex, git, etc.\\n  autosota --repo /path/to/your-clone\\n')}catch(e){}\""
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

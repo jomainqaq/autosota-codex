@@ -1,0 +1,11 @@
+# autosota-codex workspace configuration
+# Replace the placeholder key and base URL before running deep research.
+# OpenAI-compatible HTTP endpoints must include the /v1 suffix.
+
+research_model: "gpt-5.5"
+research_api_key: "sk-example-change-me"
+research_base_url: "http://127.0.0.1:8080/v1"
+
+# Keep legacy OpenRouter field empty. autosota exports OPENROUTER_API_KEY
+# from research_api_key for backward-compatible subprocesses.
+openrouter_api_key: ""

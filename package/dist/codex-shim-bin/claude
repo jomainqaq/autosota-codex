@@ -1,0 +1,305 @@
+#!/usr/bin/env node
+"use strict";
+
+const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const DEFAULT_MODEL = process.env.CODEX_DEFAULT_MODEL || "gpt-5.5";
+
+function readStdin() {
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function shouldReadStdin(parsed) {
+  return !parsed.prompt && !process.stdin.isTTY;
+}
+
+function parseArgs(argv) {
+  const parsed = {
+    prompt: "",
+    model: "",
+    outputFormat: "",
+    passthrough: [],
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "-p" || arg === "--print") {
+      if (argv[i + 1] && !argv[i + 1].startsWith("-")) {
+        parsed.prompt = argv[i + 1];
+        i += 1;
+      }
+      continue;
+    }
+    if (arg === "--model" || arg === "-m") {
+      parsed.model = argv[i + 1] || "";
+      i += 1;
+      continue;
+    }
+    if (arg === "--output-format") {
+      parsed.outputFormat = argv[i + 1] || "";
+      i += 1;
+      continue;
+    }
+    if (arg === "--version" || arg === "-v") {
+      parsed.version = true;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      parsed.help = true;
+      continue;
+    }
+    if (arg === "--dangerously-skip-permissions") {
+      continue;
+    }
+    if (arg === "--cwd" || arg === "--cd") {
+      parsed.cwd = argv[i + 1] || "";
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      // Ignore Claude-only flags. The encrypted orchestrator may pass options
+      // that Codex does not understand; keeping them would make the shim brittle.
+      if (argv[i + 1] && !argv[i + 1].startsWith("-")) i += 1;
+      continue;
+    }
+    parsed.passthrough.push(arg);
+  }
+  if (!parsed.prompt) {
+    parsed.prompt = parsed.passthrough.join(" ").trim();
+  }
+  return parsed;
+}
+
+function readConfigValue(name) {
+  const workspace = process.env.AUTOSOTA_WORKSPACE || process.cwd();
+  const configPath = path.join(workspace, "config.yaml");
+  if (!fs.existsSync(configPath)) return "";
+  const text = fs.readFileSync(configPath, "utf8");
+  const re = new RegExp(`^${name}:\\s*(.*)$`, "m");
+  const m = text.match(re);
+  if (!m) return "";
+  let value = m[1].trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+function splitExtraArgs(raw) {
+  if (!raw) return [];
+  const out = [];
+  let cur = "";
+  let quote = "";
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+      else cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+function bashDoubleQuote(value) {
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function onboardingRepoPath(prompt) {
+  if (!prompt.includes("# Paper Onboarding Task")) return "";
+
+  const fromEnv = process.env.AUTOSOTA_ONBOARD_REPO_PATH || "";
+  if (fromEnv && path.isAbsolute(fromEnv) && fs.existsSync(fromEnv)) return fromEnv;
+
+  const m = prompt.match(/- \*\*Repository path\/URL hint\*\*:\s*`([^`]+)`/);
+  const fromPrompt = m ? m[1] : "";
+  if (fromPrompt && path.isAbsolute(fromPrompt) && fs.existsSync(fromPrompt)) return fromPrompt;
+  return "";
+}
+
+function sanitizeOnboardPrompt(prompt, repoPath) {
+  if (!repoPath) return prompt;
+
+  const safeStep1 = [
+    "### Step 1 - Verify the Local Repository Boundary",
+    "",
+    "The local repository path has already been resolved by autosota.",
+    `Use exactly this repository path as \`repo_path\`: \`${repoPath}\``,
+    "",
+    "Allowed search boundary: REPO_PATH only. Do not run find, rg, grep, or ls against /, /home, $HOME, mounted drives, sibling directories, or any path outside REPO_PATH.",
+    "If REPO_PATH does not contain the expected code, stop and report the mismatch instead of broadening the search.",
+    "",
+    "```bash",
+    `REPO_PATH=${bashDoubleQuote(repoPath)}`,
+    'test -d "$REPO_PATH"',
+    'ls "$REPO_PATH"',
+    'test -f "$REPO_PATH/README.md" && sed -n "1,200p" "$REPO_PATH/README.md"',
+    "```",
+    "",
+  ].join("\n");
+
+  const boundaryNote = [
+    "## Repository Search Boundary",
+    "",
+    `Autosota resolved the repository to \`${repoPath}\`. All code discovery must stay inside this directory.`,
+    "Do not use whole-filesystem, home-directory, sibling-directory, or mounted-drive discovery commands.",
+    "",
+  ].join("\n");
+
+  let out = prompt;
+  out = out.replace(/### Step 1[^\n]*\n[\s\S]*?(?=### Step 2[^\n]*\n)/, safeStep1);
+  out = out.replace(/REPO_PATH="<discovered_repo_path>"/g, `REPO_PATH=${bashDoubleQuote(repoPath)}`);
+  out = out.replace(/\n## Goal\n/, `\n${boundaryNote}## Goal\n`);
+  return out;
+}
+
+function emitClaudeJsonLine(type, payload) {
+  process.stdout.write(`${JSON.stringify({ type, ...payload })}${os.EOL}`);
+}
+
+function normalizeJsonLine(line) {
+  if (!line.trim()) return false;
+  try {
+    const event = JSON.parse(line);
+    if (event.type === "message" && typeof event.message === "string") {
+      emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: event.message }] } });
+    } else if (event.type === "agent_message" && typeof event.message === "string") {
+      emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: event.message }] } });
+    } else if (typeof event.output === "string") {
+      emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: event.output }] } });
+    } else {
+      process.stdout.write(`${JSON.stringify(event)}${os.EOL}`);
+    }
+  } catch {
+    emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: line }] } });
+  }
+  return true;
+}
+
+function streamJsonOutput(child) {
+  let stdoutBuffer = "";
+  let stderr = "";
+  let emitted = false;
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() || "";
+    for (const line of lines) {
+      emitted = normalizeJsonLine(line) || emitted;
+    }
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  child.on("error", (err) => {
+    stderr += `${err.message}\n`;
+  });
+
+  child.on("close", (code) => {
+    const exitCode = code === null ? 1 : code;
+    emitted = normalizeJsonLine(stdoutBuffer) || emitted;
+    if (stderr.trim()) {
+      emitClaudeJsonLine("result", { subtype: "stderr", result: stderr.trim(), is_error: exitCode !== 0 });
+      emitted = true;
+    }
+    if (!emitted) {
+      emitClaudeJsonLine("result", { subtype: exitCode === 0 ? "success" : "error", result: "", is_error: exitCode !== 0 });
+    }
+    process.exitCode = exitCode;
+  });
+}
+
+function streamPlainOutput(child) {
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+  child.on("error", (err) => {
+    console.error(err.message);
+  });
+  child.on("close", (code) => {
+    process.exitCode = code === null ? 1 : code;
+  });
+}
+
+function main() {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.version) {
+    const res = spawnSync("codex", ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+    process.stdout.write(res.stdout || res.stderr || "codex shim for claude\n");
+    process.exit(res.status === null ? 1 : res.status);
+  }
+  if (parsed.help) {
+    process.stdout.write("claude compatibility shim backed by `codex exec`\n");
+    process.exit(0);
+  }
+
+  const stdin = shouldReadStdin(parsed) ? readStdin() : "";
+  let prompt = parsed.prompt || stdin;
+  if (!prompt.trim()) {
+    console.error("[autosota-codex] empty prompt passed to claude shim");
+    process.exit(2);
+  }
+  const onboardRepoPath = onboardingRepoPath(prompt);
+  prompt = sanitizeOnboardPrompt(prompt, onboardRepoPath);
+
+  const model = process.env.CODEX_MODEL || readConfigValue("codex_model") || parsed.model || DEFAULT_MODEL;
+  const sandbox = process.env.CODEX_SANDBOX || readConfigValue("codex_sandbox") || "danger-full-access";
+  const approval = process.env.CODEX_APPROVAL || readConfigValue("codex_approval") || "never";
+  const cwd = parsed.cwd || onboardRepoPath || process.cwd();
+  const extraArgs = [
+    ...splitExtraArgs(process.env.CODEX_CLI_ARGS),
+    ...splitExtraArgs(readConfigValue("codex_cli_args")),
+  ];
+
+  const args = ["exec", "--cd", cwd, "--model", model];
+
+  if (sandbox === "danger-full-access" && approval === "never") {
+    args.push("--dangerously-bypass-approvals-and-sandbox");
+  } else {
+    args.push("--sandbox", sandbox);
+    if (approval) args.push("-c", `approval_policy="${approval}"`);
+  }
+  args.push(...extraArgs);
+  if (parsed.outputFormat === "stream-json" || parsed.outputFormat === "json") {
+    args.push("--json");
+  }
+  args.push(prompt);
+
+  const child = spawn("codex", args, {
+    cwd,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
+  });
+
+  if (parsed.outputFormat === "stream-json" || parsed.outputFormat === "json") {
+    streamJsonOutput(child);
+  } else {
+    streamPlainOutput(child);
+  }
+}
+
+main();
