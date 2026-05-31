@@ -20,7 +20,7 @@ modified prebuilt `autosota-codex` build.
 ## Install
 
 ```bash
-npm install -g ./autosota-codex-0.2.1-codex.5.tgz
+npm install -g ./autosota-codex-0.2.1-codex.6.tgz
 codex login
 autosota doctor
 ```

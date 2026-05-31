@@ -1,6 +1,6 @@
 {
   "name": "autosota-codex",
-  "version": "0.2.1-codex.5",
+  "version": "0.2.1-codex.6",
   "description": "Lightweight paper-to-SOTA loop: paper PDF + target metrics + local code repo to optimized model (Codex orchestration)",
   "license": "MIT",
   "author": "autosota contributors",
