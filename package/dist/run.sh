@@ -534,17 +534,47 @@ if [ "${SKIP_ONBOARD}" = false ]; then
     fi
 fi
 
-# ── Step 2: Patch gpu_devices in config.yaml ──────────────────────────────
-python - <<EOF
+# ── Step 2: Patch GPU selection in config.yaml ────────────────────────────
+python - "${CONFIG_FILE}" "${DEVICES}" <<'PYEOF'
+import shlex
+import sys
+
 import yaml
-path = "${CONFIG_FILE}"
+
+path, devices = sys.argv[1:3]
 with open(path) as f:
     c = yaml.safe_load(f)
-c["gpu_devices"] = "${DEVICES}"
+
+c["gpu_devices"] = devices
+eval_command = c.get("eval_command")
+if isinstance(eval_command, str) and "--gpu-ids" in eval_command:
+    parts = shlex.split(eval_command)
+    updated = []
+    i = 0
+    changed = False
+    while i < len(parts):
+        part = parts[i]
+        if part == "--gpu-ids" and i + 1 < len(parts):
+            updated.extend([part, devices])
+            i += 2
+            changed = True
+            continue
+        if part.startswith("--gpu-ids="):
+            updated.append(f"--gpu-ids={devices}")
+            i += 1
+            changed = True
+            continue
+        updated.append(part)
+        i += 1
+    if changed:
+        c["eval_command"] = shlex.join(updated)
+
 with open(path, "w") as f:
     yaml.dump(c, f, default_flow_style=False, allow_unicode=True)
-print(f"[Setup] gpu_devices set to: ${DEVICES}")
-EOF
+print(f"[Setup] gpu_devices set to: {devices}")
+if isinstance(eval_command, str) and "--gpu-ids" in eval_command:
+    print(f"[Setup] eval_command --gpu-ids set to: {devices}")
+PYEOF
 
 # ── Step 3: Snapshot user-edited inputs before each run ───────────────────
 INPUT_SNAPSHOT_DIR="${DATA_DIR}/papers/${PAPER_NAME}/input_snapshots/input_$(date +%Y%m%d_%H%M%S)_$$"
