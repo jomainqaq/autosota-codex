@@ -258,6 +258,16 @@ function recordIter(record) {
   return numeric(value);
 }
 
+function isTrialRecord(record) {
+  const idea = String(record.idea_id || "").toLowerCase();
+  const rawIter = record.iter ?? record.iteration ?? record.step;
+  const iter = numeric(rawIter);
+  if (idea === "baseline" || idea === "final") return false;
+  if (String(rawIter).toLowerCase() === "final") return false;
+  if (iter === null || iter === 0) return false;
+  return true;
+}
+
 function recordMetric(record, primaryMetric) {
   const direct = numeric(record.primary_metric);
   if (direct !== null) return direct;
@@ -424,11 +434,7 @@ function analyzeRun(runDir, activeRuns = new Map()) {
   else if (activeReason) status = "running";
   else if (records.length === 0) status = "empty";
 
-  const trialRecords = records.filter((record) => {
-    const idea = String(record.idea_id || "").toLowerCase();
-    const iter = recordIter(record);
-    return idea !== "baseline" && iter !== 0;
-  });
+  const trialRecords = records.filter(isTrialRecord);
   const iters = trialRecords.map(recordIter).filter((value) => value !== null);
   const lastIter = iters.length ? Math.max(...iters) : null;
 
