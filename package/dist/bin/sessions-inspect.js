@@ -373,7 +373,6 @@ function computeActiveRuns(workspace, papers) {
   const lines = readProcessLines().filter(isRelevantProcess);
   const active = new Map();
   const workspaceActivePapers = new Set();
-  let workspaceActive = false;
 
   for (const paper of papers) {
     for (const runDir of paper.runs) {
@@ -384,9 +383,6 @@ function computeActiveRuns(workspace, papers) {
 
   for (const line of lines) {
     if (!workspace || !line.includes(workspace)) continue;
-    if (line.includes("autosota") || line.includes("optimizer/scripts/run.py") || line.includes("/scripts/run.py")) {
-      workspaceActive = true;
-    }
     for (const paper of papers) {
       if (line.includes(`run.py ${paper.name}`)) {
         workspaceActivePapers.add(paper.name);
@@ -398,14 +394,12 @@ function computeActiveRuns(workspace, papers) {
     if (!workspaceActivePapers.has(paper.name)) continue;
     const alreadyDirect = paper.runs.some((runDir) => active.has(runDir));
     if (alreadyDirect) continue;
-    const newestIncomplete = paper.runs.find((runDir) => !fs.existsSync(path.join(runDir, "results", "final_report.md")));
+    const newestIncomplete = paper.runs.find((runDir) => {
+      if (fs.existsSync(path.join(runDir, "results", "final_report.md"))) return false;
+      if (fs.existsSync(path.join(runDir, "paused.flag"))) return false;
+      return true;
+    });
     if (newestIncomplete) active.set(newestIncomplete, "workspace optimizer process is active");
-  }
-
-  if (active.size === 0 && workspaceActive) {
-    const newestIncomplete = sortRunsNewestFirst(papers.flatMap((paper) => paper.runs))
-      .find((runDir) => !fs.existsSync(path.join(runDir, "results", "final_report.md")));
-    if (newestIncomplete) active.set(newestIncomplete, "workspace autosota process is active");
   }
 
   return active;
@@ -422,11 +416,12 @@ function analyzeRun(runDir, activeRuns = new Map()) {
   const curve = path.join(runDir, "results", "optimization_curve.png");
   const scores = path.join(runDir, "results", "scores.jsonl");
   const activeReason = activeRuns.get(runDir) || "";
+  const paused = fs.existsSync(path.join(runDir, "paused.flag"));
 
   let status = "aborted";
-  if (activeReason) status = "running";
-  else if (fs.existsSync(path.join(runDir, "paused.flag"))) status = "paused";
-  else if (fs.existsSync(finalReport)) status = "complete";
+  if (fs.existsSync(finalReport)) status = "complete";
+  else if (paused) status = "paused";
+  else if (activeReason) status = "running";
   else if (records.length === 0) status = "empty";
 
   const trialRecords = records.filter((record) => {
