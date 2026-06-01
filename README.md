@@ -18,13 +18,13 @@ modified prebuilt `autosota-codex` package.
 Download and install the release package:
 
 ```bash
-npm install -g https://github.com/jomainqaq/autosota-codex/releases/download/v0.2.1-codex.6/autosota-codex-0.2.1-codex.6.tgz
+npm install -g https://github.com/jomainqaq/autosota-codex/releases/download/v0.2.1-codex.7/autosota-codex-0.2.1-codex.7.tgz
 ```
 
 Or install from a local downloaded artifact:
 
 ```bash
-npm install -g ./autosota-codex-0.2.1-codex.6.tgz
+npm install -g ./autosota-codex-0.2.1-codex.7.tgz
 ```
 
 ## Basic Usage
@@ -52,7 +52,7 @@ with your OpenAI-compatible endpoint and keep the `/v1` suffix.
 
 Each GitHub Release should attach:
 
-- `autosota-codex-0.2.1-codex.6.tgz`
+- `autosota-codex-0.2.1-codex.7.tgz`
 - `SHA256SUMS.txt`
 
 Verify the downloaded package:

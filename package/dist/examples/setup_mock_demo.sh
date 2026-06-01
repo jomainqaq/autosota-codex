@@ -68,8 +68,6 @@ cfg = {
     "max_debug_attempts": 2,
     "max_debug_minutes": 5,
     "research_timeout_minutes": 5,
-    "research_api_key": "sk-example-change-me",
-    "research_base_url": "http://127.0.0.1:8080/v1",
     "research_model": "openai/o4-mini-deep-research",
     "openrouter_api_key": "",
     "setup_notes": (
@@ -99,6 +97,5 @@ echo "下一步（项目根目录）："
 echo "  # 仅生成 master prompt，不调用 Claude API（仍会跑 onboard 补丁逻辑前的 gpu 写入等）"
 echo "  bash run.sh mock-demo --skip-research --dry-run"
 echo ""
-echo "若要真跑深度研究，请把根目录 config.yaml 或 ${CONFIG_FILE} 的 research_api_key 改成真实 Key。"
-echo "research_base_url 也要改成你的 OpenAI-compatible API 地址，并保留 /v1 后缀。"
-echo "仅测优化阶段时继续使用 --skip-research；openrouter_api_key 只保留作 legacy fallback。"
+echo "若根目录已有 config.yaml 且含 openrouter_api_key，研究会使用该 Key；无 Key 时请配合 --skip-research。"
+echo "OpenRouter Key 也可写在 ${CONFIG_FILE} 的 openrouter_api_key 字段。"

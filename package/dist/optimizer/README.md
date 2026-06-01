@@ -150,17 +150,10 @@ max_debug_attempts: 3
 max_debug_minutes: 15
 
 # Deep research
-research_api_key: "sk-example-change-me"
-research_base_url: "http://127.0.0.1:8080/v1"
+openrouter_api_key: "YOUR_OPENROUTER_API_KEY"
 research_model: "openai/o4-mini-deep-research"
 research_timeout_minutes: 20
-openrouter_api_key: ""  # legacy fallback; leave empty when research_api_key is set
 ```
-
-Replace `research_api_key` with your real key and `research_base_url` with
-your OpenAI-compatible API endpoint. For local/proxy endpoints, keep the `/v1`
-suffix, for example `http://your-openai-compatible-server:8080/v1` instead of
-`http://your-openai-compatible-server:8080`.
 
 ## Output Files
 

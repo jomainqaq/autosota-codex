@@ -14,8 +14,7 @@
 #       --notes   "<optional notes>"
 #
 # What it does:
-#   1. git add -A with autosota runtime exclusions && git commit
-#      (captures the current code state as a real commit)
+#   1. git add -A && git commit (captures the current working-tree state as a real commit)
 #   2. Reads the real commit hash via git rev-parse HEAD
 #   3. On success AND improvement: moves the _best tag to this commit
 #   4. Appends one JSON line to scores.jsonl with the real hash
@@ -183,74 +182,9 @@ cd "$REPO_ROOT"
 git config user.name  "optimizer" 2>/dev/null || true
 git config user.email "opt@local" 2>/dev/null || true
 
-ensure_autosota_git_excludes() {
-  local exclude_file
-  exclude_file="$(git rev-parse --git-path info/exclude 2>/dev/null || true)"
-  [[ -n "$exclude_file" ]] || return 0
-  mkdir -p "$(dirname "$exclude_file")"
-  touch "$exclude_file"
-
-  # Undo the overly broad excludes written by autosota-codex 0.2.x only when
-  # the full buggy pattern set is present. Target repos may legitimately own
-  # top-level logs/ or optimized_code/ directories.
-  if grep -Fxq ".autosota/" "$exclude_file" \
-      && grep -Fxq ".autosota_protected_hashes.json" "$exclude_file" \
-      && grep -Fxq "logs/" "$exclude_file" \
-      && grep -Fxq "optimized_code/" "$exclude_file"; then
-    local tmp_file
-    tmp_file="${exclude_file}.autosota_tmp"
-    awk '$0 != "logs/" && $0 != "optimized_code/" { print }' "$exclude_file" > "$tmp_file"
-    mv "$tmp_file" "$exclude_file"
-  fi
-
-  local pattern
-  for pattern in ".autosota/" ".autosota_protected_hashes.json"; do
-    grep -Fxq "$pattern" "$exclude_file" || printf '%s\n' "$pattern" >> "$exclude_file"
-  done
-}
-
-derive_paper_name() {
-  python3 - "$SCORES" <<'PYEOF' 2>/dev/null || true
-from pathlib import Path
-import sys
-
-parts = Path(sys.argv[1]).parts
-for idx, part in enumerate(parts):
-    if part == "papers" and idx + 2 < len(parts) and parts[idx + 2] == "runs":
-        print(parts[idx + 1])
-        break
-PYEOF
-}
-
-unstage_autosota_artifacts() {
-  local paper_name="$1"
-  git reset -q -- .autosota .autosota_protected_hashes.json 2>/dev/null || true
-  [[ -n "$paper_name" ]] || return 0
-
-  git reset -q -- \
-    "logs/sota/${paper_name}.log" \
-    "logs/optimizer_detail/${paper_name}.log" \
-    "logs/optimizer_detail/${paper_name}_onboard.log" \
-    2>/dev/null || true
-
-  local export_dir="optimized_code/${paper_name}"
-  if [[ -f "${export_dir}/.autosota_export_marker" || -d "${export_dir}/autosota_results" ]]; then
-    git reset -q -- "${export_dir}" 2>/dev/null || true
-  fi
-}
-
-git_add_code_state() {
-  local paper_name
-  paper_name="$(derive_paper_name)"
-  git add -A
-  unstage_autosota_artifacts "$paper_name"
-}
-
-ensure_autosota_git_excludes
-
 if [[ "$ALREADY_RECORDED" == "false" ]]; then
-  # Stage code changes and commit (--allow-empty in case nothing changed).
-  git_add_code_state
+  # Stage all changes and commit (--allow-empty in case nothing changed)
+  git add -A
   COMMIT_MSG="iter-${ITER}: ${TITLE} [${STATUS}]"
   git commit -q -m "$COMMIT_MSG" --allow-empty
   COMMIT_HASH=$(git rev-parse HEAD)

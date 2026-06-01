@@ -123,8 +123,8 @@ max_debug_minutes: 15
 # config. They only take effect in the workspace-root config.yaml, where run.sh
 # injects them into the claude CLI subprocess environment.
 openrouter_api_key: "{OPENROUTER_API_KEY}"   # legacy field, back-compat; safe to leave blank
-research_api_key: ""                          # blank → falls back to RESEARCH_API_KEY env var; example: "sk-example-change-me"
-research_base_url: ""                         # blank → falls back to RESEARCH_BASE_URL env var; endpoint overrides must include /v1, e.g. "http://127.0.0.1:8080/v1"
+research_api_key: ""                          # blank → falls back to RESEARCH_API_KEY env var
+research_base_url: ""                         # blank → falls back to RESEARCH_BASE_URL env var (defaults to OpenRouter)
 research_model: "openai/o4-mini-deep-research"
 research_timeout_minutes: 20
 

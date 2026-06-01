@@ -111,36 +111,31 @@ PYEOF
         return 0
     fi
 
-    if ! git -C "${repo_path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "[Export] ${repo_path} is not a git worktree — skipping export."
-        return 0
+    # Checkout _best if tag exists
+    local tag_ok
+    tag_ok=$(git -C "${repo_path}" rev-parse --verify _best >/dev/null 2>&1 && echo YES || echo NO)
+
+    if [ "${tag_ok}" = "YES" ]; then
+        git -C "${repo_path}" checkout _best --quiet 2>/dev/null || true
+        echo "[Export] Checked out _best in ${repo_path}"
+    else
+        echo "[Export] WARNING: _best tag not found — exporting current HEAD"
     fi
 
-    # Parse best summary and commit from scores.jsonl before touching repo state.
+    # Parse best summary from scores.jsonl
     local scores_path="${DATA_DIR}/papers/${paper_name}/runs/latest/results/scores.jsonl"
-    local results_dir="${DATA_DIR}/papers/${paper_name}/runs/latest/results"
     local best_summary="n/a"
-    local best_commit=""
     if [ -f "${scores_path}" ]; then
-        local best_info
-        best_info=$(python3 - "${scores_path}" "${config_path}" <<'PYEOF'
+        best_summary=$(python3 - "${scores_path}" "${config_path}" <<'PYEOF'
 import json, sys
 
 import yaml
 
-records = []
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        records.append(json.loads(line))
-    except json.JSONDecodeError:
-        pass
+lines = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+records = [json.loads(l) for l in lines]
 ok = [r for r in records if r.get("status") == "success" and r.get("primary_metric") is not None]
 if not ok:
     print("n/a")
-    print("")
     sys.exit(0)
 bl = next((r for r in records if r.get("idea_id") == "baseline"), None)
 if bl:
@@ -161,64 +156,20 @@ if bl:
     else:
         print(f"{best.get('idea_title','?')} ({raw_delta:+.4g})")
 else:
-    best = ok[-1]
-    print(best.get("idea_title", "n/a"))
-print(best.get("commit") or "")
+    print(ok[-1].get("idea_title", "n/a"))
 PYEOF
         ) || true
-        best_summary=$(printf '%s\n' "${best_info}" | sed -n '1p')
-        best_commit=$(printf '%s\n' "${best_info}" | sed -n '2p')
-    fi
-
-    local export_commit=""
-    if [ -n "${best_commit}" ] && git -C "${repo_path}" cat-file -e "${best_commit}^{commit}" 2>/dev/null; then
-        export_commit="${best_commit}"
-    elif git -C "${repo_path}" rev-parse --verify _best >/dev/null 2>&1; then
-        export_commit=$(git -C "${repo_path}" rev-parse _best^{commit})
-        echo "[Export] WARNING: best score commit unavailable — exporting _best."
-    else
-        export_commit=$(git -C "${repo_path}" rev-parse HEAD)
-        echo "[Export] WARNING: _best tag not found — exporting current HEAD."
-    fi
-
-    local repo_real export_parent_real export_real
-    repo_real=$(cd "${repo_path}" && pwd -P)
-    mkdir -p "${out_root}"
-    export_parent_real=$(cd "$(dirname "${export_dir}")" && pwd -P)
-    export_real="${export_parent_real}/$(basename "${export_dir}")"
-    if [ "${export_real}" = "${repo_real}" ]; then
-        echo "[Export] Refusing to overwrite repo_path with export_dir: ${export_dir}"
-        return 0
     fi
 
     rm -rf "${export_dir}"
-    mkdir -p "${export_dir}"
-    if git -C "${repo_path}" archive --format=tar "${export_commit}" | tar -x -C "${export_dir}"; then
-        rm -rf \
-            "${export_dir}/.autosota" \
-            "${export_dir}/.autosota_protected_hashes.json"
-        printf 'autosota export\npaper=%s\ncommit=%s\n' "${paper_name}" "${export_commit}" > "${export_dir}/.autosota_export_marker"
-        echo "[Export] ✓ archived ${export_commit:0:10} → ${export_dir}"
+    if cp -a "${repo_path}" "${export_dir}" 2>/dev/null; then
+        echo "[Export] ✓ copied repo → ${export_dir}"
     else
-        echo "[Export] ERROR: failed to archive ${export_commit:0:10}"
-        return 1
-    fi
-
-    local submodules
-    submodules=$(git -C "${repo_path}" ls-tree -r "${export_commit}" 2>/dev/null | awk '$1 == "160000" {print $4}' || true)
-    if [ -n "${submodules}" ]; then
-        echo "[Export] WARNING: exported commit contains gitlink/submodule path(s):"
-        printf '%s\n' "${submodules}" | sed 's/^/[Export]   - /'
-    fi
-
-    if [ -d "${results_dir}" ]; then
-        mkdir -p "${export_dir}/autosota_results"
-        cp -a "${results_dir}/." "${export_dir}/autosota_results/" 2>/dev/null || true
-        echo "[Export] ✓ run artifacts → ${export_dir}/autosota_results/"
+        echo "[Export]   copy failed (non-fatal)"
     fi
 
     local diff_out="${export_dir}/final_patch.diff"
-    git -C "${repo_path}" diff _baseline "${export_commit}" -- 2>/dev/null > "${diff_out}" || true
+    git -C "${repo_path}" diff _baseline _best -- 2>/dev/null > "${diff_out}" || true
     if [ -s "${diff_out}" ]; then
         echo "[Export] ✓ patch diff  → ${diff_out}"
     fi
@@ -250,36 +201,6 @@ RESEARCH_TIMEOUT=""
 MAX_TOTAL_MINUTES=""
 PRIORS_DIR=""
 INPUT_SNAPSHOT_DIR=""
-
-resolve_onboard_repo() {
-    local repo_hint="$1"
-
-    if [ -z "${repo_hint}" ]; then
-        repo_hint="${WORKSPACE_ROOT}"
-    fi
-
-    case "${repo_hint}" in
-        http://*|https://*|git@*)
-            printf '%s\n' "${repo_hint}"
-            return 0
-            ;;
-    esac
-
-    local repo_path
-    if [[ "${repo_hint}" = /* ]]; then
-        repo_path="${repo_hint}"
-    else
-        repo_path="${WORKSPACE_ROOT}/${repo_hint}"
-    fi
-
-    if [ ! -d "${repo_path}" ]; then
-        echo "[ERROR] --repo path does not exist: ${repo_path}" >&2
-        echo "        Resolve the path yourself; onboard will not search outside the workspace." >&2
-        return 1
-    fi
-
-    (cd "${repo_path}" && pwd -P)
-}
 
 # First positional arg is paper_name (only if it doesn't look like a flag).
 # Note: must reject both --* (long flags) and -* (short flags like -i).
@@ -327,11 +248,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if ! REPO="$(resolve_onboard_repo "${REPO}")"; then
-    exit 1
-fi
-export AUTOSOTA_ONBOARD_REPO_PATH="${REPO}"
 
 # ── Auto-detect paper-dir ──────────────────────────────────────────────────
 if [ -z "${PAPER_DIR}" ] && [ -d "${WORKSPACE_ROOT}/paper" ]; then
@@ -732,23 +648,6 @@ def as_float(value):
     except (TypeError, ValueError):
         return None
 
-def has_value(data, key):
-    return key in data and data.get(key) is not None
-
-def normalize_direction(value):
-    if value is None:
-        return None
-    raw = str(value).strip().lower()
-    if raw in ("higher", "high", "maximize", "max", "greater", "larger", "up", "true"):
-        return "higher"
-    if raw in ("lower", "low", "minimize", "min", "less", "smaller", "down", "false"):
-        return "lower"
-    if raw.startswith("higher") or raw.startswith("max"):
-        return "higher"
-    if raw.startswith("lower") or raw.startswith("min"):
-        return "lower"
-    raise SystemExit(f"[Inputs] ERROR: unsupported metric_direction in target.md: {value!r}. Use higher or lower.")
-
 def front_matter(text):
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -759,12 +658,10 @@ def front_matter(text):
             return data if isinstance(data, dict) else {}
     return {}
 
-def metric_direction_lower(fm=None):
-    direction = str(cfg.get("metric_direction") or "lower").strip().lower()
+def metric_direction_lower():
+    direction = str(cfg.get("metric_direction") or "lower").lower()
     lower_is_better = not direction.startswith("higher")
-    if fm and has_value(fm, "lower_is_better"):
-        lower_is_better = bool(fm.get("lower_is_better"))
-    elif "lower_is_better" in cfg:
+    if "lower_is_better" in cfg:
         lower_is_better = bool(cfg.get("lower_is_better"))
     return lower_is_better
 
@@ -777,101 +674,12 @@ def plausible_values(values, baseline, lower_is_better):
         preferred = [v for v in values if v >= abs(baseline) * 0.5]
     return preferred or values
 
-def stale_metric_text(text, old_primary, new_primary):
-    if text is None:
-        return False
-    lowered = str(text).lower()
-    old_lower = (old_primary or "").lower()
-    new_lower = (new_primary or "").lower()
-    if old_lower and old_lower != new_lower and old_lower in lowered:
-        return True
-    if new_lower and "external" in new_lower and "external validation" in lowered:
-        blockers = (
-            "must not drive",
-            "must not be used",
-            "do not drive",
-            "do not use",
-            "not drive selection",
-            "not drive target",
-        )
-        return any(phrase in lowered for phrase in blockers)
-    if new_lower and new_lower not in lowered:
-        stale_intent = (
-            "primary metric",
-            "target check",
-            "target checks",
-            "drive selection",
-            "tune only",
-            "optimize only",
-            "selection metric",
-        )
-        return any(phrase in lowered for phrase in stale_intent)
-    return False
-
-def clear_stale_metric_text_fields(old_primary, new_primary):
-    global changed
-    if not new_primary:
-        return
-    for key in ("eval_output_format", "known_levers"):
-        if key in cfg and stale_metric_text(cfg.get(key), old_primary, new_primary):
-            cfg.pop(key, None)
-            changed = True
-            print(f"[Inputs] {key} cleared because it conflicted with target.md primary_metric: {new_primary}")
-
-def sync_target_metric_fields(fm):
-    global changed
-    if not fm:
-        return
-
-    old_primary = str(cfg.get("primary_metric") or "").strip()
-    new_primary = old_primary
-
-    if has_value(fm, "primary_metric"):
-        primary = str(fm.get("primary_metric")).strip()
-        if primary and cfg.get("primary_metric") != primary:
-            cfg["primary_metric"] = primary
-            changed = True
-        if primary:
-            new_primary = primary
-        if primary:
-            print(f"[Inputs] primary_metric set from target.md: {primary}")
-    clear_stale_metric_text_fields(old_primary, new_primary)
-
-    if has_value(fm, "metric_direction"):
-        direction = normalize_direction(fm.get("metric_direction"))
-        if cfg.get("metric_direction") != direction:
-            cfg["metric_direction"] = direction
-            changed = True
-        if has_value(fm, "lower_is_better"):
-            lower_is_better = bool(fm.get("lower_is_better"))
-            if cfg.get("lower_is_better") != lower_is_better:
-                cfg["lower_is_better"] = lower_is_better
-                changed = True
-        elif "lower_is_better" in cfg:
-            cfg.pop("lower_is_better", None)
-            changed = True
-        print(f"[Inputs] metric_direction set from target.md: {direction}")
-
-    bounds_changed = False
-    for key in ("metric_lower_bound", "metric_upper_bound"):
-        if has_value(fm, key):
-            value = as_float(fm.get(key))
-            if value is None:
-                raise SystemExit(f"[Inputs] ERROR: {key} in target.md must be numeric.")
-            if cfg.get(key) != value:
-                cfg[key] = value
-                changed = True
-            bounds_changed = True
-    if bounds_changed:
-        lower = cfg.get("metric_lower_bound")
-        upper = cfg.get("metric_upper_bound")
-        print(f"[Inputs] metric bounds set from target.md: [{lower}, {upper}]")
-
-def extract_target(text, fm):
+def extract_target(text):
     primary = str(cfg.get("primary_metric") or "").strip()
     baselines = cfg.get("baseline_metrics") or {}
     baseline = as_float(baselines.get(primary)) if primary else None
-    lower_is_better = metric_direction_lower(fm)
+    lower_is_better = metric_direction_lower()
+    fm = front_matter(text)
 
     pct_override = as_float(fm.get("target_improvement_pct")) if fm else None
     fm_target_value = as_float(fm.get("target_value")) if fm else None
@@ -965,11 +773,9 @@ def extract_target(text, fm):
 target_path = resolve_workspace_path(target_path_arg)
 target_snapshot = snapshot_dir / "target.md"
 target_text = ""
-target_fm = {}
 if target_path and target_path.is_file():
     manifest["target"] = copy_if_file(target_path, target_snapshot)
     target_text = target_snapshot.read_text(encoding="utf-8")
-    target_fm = front_matter(target_text)
 
 priors_dir = resolve_workspace_path(priors_dir_arg)
 for name in ("references.md", "ideas.md", "directions.md"):
@@ -1021,17 +827,10 @@ if repo_arg and not re.match(r"^(https?://|git@)", repo_arg):
 cfg["input_snapshot_dir"] = str(snapshot_dir)
 changed = True
 
-if manifest["target"] is not None:
-    sync_target_metric_fields(target_fm)
-    if manifest["target"]:
-        cfg["target_source"] = str(target_path)
-        cfg["target_source_sha256"] = manifest["target"]["source_sha256"]
-        changed = True
-
 if cli_target_pct:
     print(f"[Inputs] target from CLI --target-pct: {cli_target_pct}")
 elif manifest["target"] is not None:
-    parsed = extract_target(target_text, target_fm)
+    parsed = extract_target(target_text)
     if parsed is None:
         raise SystemExit(
             "[Inputs] ERROR: target.md exists but no unambiguous numeric target was found. "
@@ -1044,8 +843,9 @@ elif manifest["target"] is not None:
     if parsed["target_improvement_pct"] is not None:
         cfg["target_improvement_pct"] = round(parsed["target_improvement_pct"], 6)
         changed = True
-    elif "target_improvement_pct" in cfg:
-        cfg.pop("target_improvement_pct", None)
+    if manifest["target"]:
+        cfg["target_source"] = str(target_path)
+        cfg["target_source_sha256"] = manifest["target"]["source_sha256"]
         changed = True
 
     metric = parsed["primary_metric"] or "primary_metric"
@@ -1055,7 +855,7 @@ elif manifest["target"] is not None:
     if parsed["target_improvement_pct"] is not None:
         print(f"[Inputs] target_improvement_pct set to: {parsed['target_improvement_pct']:.2f}")
     else:
-        print("[Inputs] target_improvement_pct cleared because baseline_metrics is missing or zero")
+        print("[Inputs] target_improvement_pct unchanged because baseline_metrics is missing or zero")
     if parsed.get("source_line"):
         print(f"[Inputs] target source line: {parsed['source_line']}")
 else:
@@ -1065,8 +865,6 @@ manifest["effective_config"] = {
     "repo_path": cfg.get("repo_path"),
     "primary_metric": cfg.get("primary_metric"),
     "metric_direction": cfg.get("metric_direction"),
-    "metric_lower_bound": cfg.get("metric_lower_bound"),
-    "metric_upper_bound": cfg.get("metric_upper_bound"),
     "target_value": cfg.get("target_value"),
     "target_improvement_pct": cfg.get("target_improvement_pct"),
 }

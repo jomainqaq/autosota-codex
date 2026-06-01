@@ -120,141 +120,14 @@ function splitExtraArgs(raw) {
   return out;
 }
 
-function bashDoubleQuote(value) {
-  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
-}
-
-function onboardingRepoPath(prompt) {
-  if (!prompt.includes("# Paper Onboarding Task")) return "";
-
-  const fromEnv = process.env.AUTOSOTA_ONBOARD_REPO_PATH || "";
-  if (fromEnv && path.isAbsolute(fromEnv) && fs.existsSync(fromEnv)) return fromEnv;
-
-  const m = prompt.match(/- \*\*Repository path\/URL hint\*\*:\s*`([^`]+)`/);
-  const fromPrompt = m ? m[1] : "";
-  if (fromPrompt && path.isAbsolute(fromPrompt) && fs.existsSync(fromPrompt)) return fromPrompt;
-  return "";
-}
-
-function sanitizeOnboardPrompt(prompt, repoPath) {
-  if (!repoPath) return prompt;
-
-  const safeStep1 = [
-    "### Step 1 - Verify the Local Repository Boundary",
-    "",
-    "The local repository path has already been resolved by autosota.",
-    `Use exactly this repository path as \`repo_path\`: \`${repoPath}\``,
-    "",
-    "Allowed search boundary: REPO_PATH only. Do not run find, rg, grep, or ls against /, /home, $HOME, mounted drives, sibling directories, or any path outside REPO_PATH.",
-    "If REPO_PATH does not contain the expected code, stop and report the mismatch instead of broadening the search.",
-    "",
-    "```bash",
-    `REPO_PATH=${bashDoubleQuote(repoPath)}`,
-    'test -d "$REPO_PATH"',
-    'ls "$REPO_PATH"',
-    'test -f "$REPO_PATH/README.md" && sed -n "1,200p" "$REPO_PATH/README.md"',
-    "```",
-    "",
-  ].join("\n");
-
-  const boundaryNote = [
-    "## Repository Search Boundary",
-    "",
-    `Autosota resolved the repository to \`${repoPath}\`. All code discovery must stay inside this directory.`,
-    "Do not use whole-filesystem, home-directory, sibling-directory, or mounted-drive discovery commands.",
-    "",
-  ].join("\n");
-
-  let out = prompt;
-  out = out.replace(/### Step 1[^\n]*\n[\s\S]*?(?=### Step 2[^\n]*\n)/, safeStep1);
-  out = out.replace(/REPO_PATH="<discovered_repo_path>"/g, `REPO_PATH=${bashDoubleQuote(repoPath)}`);
-  out = out.replace(/\n## Goal\n/, `\n${boundaryNote}## Goal\n`);
-  return out;
-}
-
 function emitClaudeJsonLine(type, payload) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}${os.EOL}`);
 }
 
-function createJsonStreamState() {
-  return {
-    eventCount: 0,
-    assistantMessages: 0,
-    toolEvents: 0,
-    sessionId: "",
-    totalCostUsd: null,
-    startedAt: Date.now(),
-  };
-}
-
-function firstNumber(...values) {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
-  }
-  return null;
-}
-
-function updateJsonStreamState(state, event) {
-  state.eventCount += 1;
-  state.sessionId = state.sessionId || event.session_id || event.sessionId || event.conversation_id || "";
-
-  if (event.type === "message" || event.type === "agent_message" || typeof event.output === "string") {
-    state.assistantMessages += 1;
-  }
-
-  const item = event.item || event.payload || {};
-  const itemType = item.type || event.item_type || "";
-  if (
-    event.type === "item.completed" ||
-    event.type === "function_call" ||
-    event.type === "function_call_output" ||
-    itemType === "command_execution" ||
-    itemType === "function_call"
-  ) {
-    state.toolEvents += 1;
-  }
-
-  const usage = event.usage || event.token_usage || item.usage || {};
-  const cost = firstNumber(
-    event.total_cost_usd,
-    event.cost_usd,
-    event.total_cost,
-    usage.total_cost_usd,
-    usage.cost_usd,
-  );
-  if (cost !== null) state.totalCostUsd = cost;
-}
-
-function estimatedTurns(state) {
-  if (state.assistantMessages > 0) return state.assistantMessages;
-  if (state.toolEvents > 0) return state.toolEvents;
-  return state.eventCount > 0 ? 1 : 0;
-}
-
-function makeResultPayload(exitCode, state, stderr) {
-  const payload = {
-    subtype: exitCode === 0 ? "success" : "error",
-    result: exitCode === 0 ? "" : stderr.trim(),
-    is_error: exitCode !== 0,
-    duration_ms: Date.now() - state.startedAt,
-    duration_api_ms: 0,
-    num_turns: estimatedTurns(state),
-  };
-  if (state.sessionId) payload.session_id = state.sessionId;
-  if (state.totalCostUsd !== null) {
-    payload.total_cost_usd = state.totalCostUsd;
-  } else {
-    payload.cost_usd_unavailable = true;
-  }
-  return payload;
-}
-
-function normalizeJsonLine(line, state) {
+function normalizeJsonLine(line) {
   if (!line.trim()) return false;
   try {
     const event = JSON.parse(line);
-    updateJsonStreamState(state, event);
     if (event.type === "message" && typeof event.message === "string") {
       emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: event.message }] } });
     } else if (event.type === "agent_message" && typeof event.message === "string") {
@@ -265,7 +138,6 @@ function normalizeJsonLine(line, state) {
       process.stdout.write(`${JSON.stringify(event)}${os.EOL}`);
     }
   } catch {
-    state.assistantMessages += 1;
     emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: line }] } });
   }
   return true;
@@ -275,7 +147,6 @@ function streamJsonOutput(child) {
   let stdoutBuffer = "";
   let stderr = "";
   let emitted = false;
-  const state = createJsonStreamState();
 
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -283,7 +154,7 @@ function streamJsonOutput(child) {
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() || "";
     for (const line of lines) {
-      emitted = normalizeJsonLine(line, state) || emitted;
+      emitted = normalizeJsonLine(line) || emitted;
     }
   });
 
@@ -298,11 +169,14 @@ function streamJsonOutput(child) {
 
   child.on("close", (code) => {
     const exitCode = code === null ? 1 : code;
-    emitted = normalizeJsonLine(stdoutBuffer, state) || emitted;
+    emitted = normalizeJsonLine(stdoutBuffer) || emitted;
     if (stderr.trim()) {
-      emitClaudeJsonLine("assistant", { message: { content: [{ type: "text", text: stderr.trim() }] } });
+      emitClaudeJsonLine("result", { subtype: "stderr", result: stderr.trim(), is_error: exitCode !== 0 });
+      emitted = true;
     }
-    emitClaudeJsonLine("result", makeResultPayload(exitCode, state, stderr));
+    if (!emitted) {
+      emitClaudeJsonLine("result", { subtype: exitCode === 0 ? "success" : "error", result: "", is_error: exitCode !== 0 });
+    }
     process.exitCode = exitCode;
   });
 }
@@ -331,18 +205,16 @@ function main() {
   }
 
   const stdin = shouldReadStdin(parsed) ? readStdin() : "";
-  let prompt = parsed.prompt || stdin;
+  const prompt = parsed.prompt || stdin;
   if (!prompt.trim()) {
     console.error("[autosota-codex] empty prompt passed to claude shim");
     process.exit(2);
   }
-  const onboardRepoPath = onboardingRepoPath(prompt);
-  prompt = sanitizeOnboardPrompt(prompt, onboardRepoPath);
 
   const model = process.env.CODEX_MODEL || readConfigValue("codex_model") || parsed.model || DEFAULT_MODEL;
   const sandbox = process.env.CODEX_SANDBOX || readConfigValue("codex_sandbox") || "danger-full-access";
   const approval = process.env.CODEX_APPROVAL || readConfigValue("codex_approval") || "never";
-  const cwd = parsed.cwd || onboardRepoPath || process.cwd();
+  const cwd = parsed.cwd || process.cwd();
   const extraArgs = [
     ...splitExtraArgs(process.env.CODEX_CLI_ARGS),
     ...splitExtraArgs(readConfigValue("codex_cli_args")),

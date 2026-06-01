@@ -32,7 +32,7 @@ bash run.sh mock-demo --skip-research --dry-run
 
 ## 真跑 Claude（检查工作区 / 工具是否正常）
 
-前提：`which claude` 能找到 **Claude Code CLI**，且已登录（见 [Claude Code 文档](https://docs.anthropic.com/en/docs/claude-code)）。根目录 `config.yaml` 里可配置 `research_api_key` 和 `research_base_url`（深度研究会用到）；`research_base_url` 必须带 `/v1`，例如 `http://127.0.0.1:8080/v1`。仅测优化阶段时可加 `--skip-research`；`openrouter_api_key` 只保留作 legacy fallback。
+前提：`which claude` 能找到 **Claude Code CLI**，且已登录（见 [Claude Code 文档](https://docs.anthropic.com/en/docs/claude-code)）。根目录 `config.yaml` 里可配置 `openrouter_api_key`（深度研究会用到）；仅测优化阶段时可加 `--skip-research`。
 
 **工作区说明**：编排器会把 Claude 子进程的**当前工作目录（cwd）**设为 `config.yaml` 里的 `repo_path`（例如 mock 的 `examples/mock_paper_repo`），与 prompt 里「在论文仓库里改代码」一致；若仍出现路径问题，可看终端里打印的 `CWD:` 行确认。
 

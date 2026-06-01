@@ -128,11 +128,9 @@ max_iterations: 20
 max_debug_attempts: 3
 max_debug_minutes: 15
 
-research_api_key: "sk-example-change-me"
-research_base_url: "http://127.0.0.1:8080/v1"
+openrouter_api_key: "YOUR_OPENROUTER_API_KEY"
 research_model: "openai/o4-mini-deep-research"
 research_timeout_minutes: 20
-openrouter_api_key: ""  # legacy fallback; research_api_key 已设置时保持为空
 
 eval_output_format: |
   Describe how to parse metrics from stdout.
@@ -143,10 +141,6 @@ known_levers: |
 setup_notes: |
   Any one-time setup notes for humans (data layout, checkpoints, etc.)
 ```
-
-把 `research_api_key` 改成真实 key，把 `research_base_url` 改成你的
-OpenAI-compatible API 地址。本地或代理 endpoint 必须保留 `/v1` 后缀，
-例如 `http://your-openai-compatible-server:8080/v1`，不要写成 `http://your-openai-compatible-server:8080`。
 
 ---
 

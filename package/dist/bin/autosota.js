@@ -240,54 +240,8 @@ function runLegacy(args) {
   process.exit(res.status === null ? 1 : res.status);
 }
 
-function copyTemplateFile(src, dest, force) {
-  if (fs.existsSync(dest) && !force) return false;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
-  return true;
-}
-
-function copyTemplateTree(srcDir, destDir, force) {
-  let wrote = false;
-  fs.mkdirSync(destDir, { recursive: true });
-  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
-    const src = path.join(srcDir, entry.name);
-    const dest = path.join(destDir, entry.name);
-    if (entry.isDirectory()) {
-      wrote = copyTemplateTree(src, dest, force) || wrote;
-    } else if (entry.isFile()) {
-      wrote = copyTemplateFile(src, dest, force) || wrote;
-    }
-  }
-  return wrote;
-}
-
 function initCmd(args) {
-  const unknown = args.filter((arg) => arg !== "--force");
-  if (unknown.length) {
-    console.error(red(`[autosota-codex] unknown init option: ${unknown[0]}`));
-    process.exit(2);
-  }
-
-  const force = args.includes("--force");
-  const workspace = process.cwd();
-  const cfgPath = path.join(workspace, "config.yaml");
-  const paperPath = path.join(workspace, "paper");
-
-  console.log(bold(`autosota init - scaffolding in ${workspace}`));
-  console.log("");
-  const cfgWrote = copyTemplateFile(path.join(ROOT, "config.yaml.example"), cfgPath, force);
-  const paperWrote = copyTemplateTree(path.join(ROOT, "paper_template"), paperPath, force);
-  console.log(`  ${cfgWrote ? green("wrote") : yellow("kept")}  ${cfgPath}`);
-  console.log(`  ${paperWrote ? green("wrote") : yellow("kept")}  ${paperPath}`);
-  console.log("");
-  console.log("Next steps:");
-  console.log(`  1. Edit ${cfgPath} - set research_api_key and research_base_url (include /v1)`);
-  console.log("     Leave openrouter_api_key empty unless using legacy fallback.");
-  console.log(`  2. Edit ${path.join(paperPath, "target.md")} - describe metrics & goal`);
-  console.log(`  3. (optional) Replace ${path.join(paperPath, "paper.pdf")} with the real paper`);
-  console.log(`  4. ${bold("autosota doctor")}   # verify`);
-  console.log(`  5. ${bold("autosota --repo /path/to/your-clone")}`);
+  runLegacy(["init", ...args]);
 }
 
 function loginCmd(args) {

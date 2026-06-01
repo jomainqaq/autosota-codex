@@ -1,16 +1,16 @@
 {
   "name": "autosota-codex",
-  "version": "0.2.1-codex.6",
+  "version": "0.2.1-codex.7",
   "description": "Lightweight paper-to-SOTA loop: paper PDF + target metrics + local code repo to optimized model (Codex orchestration)",
   "license": "MIT",
   "author": "autosota contributors",
-  "homepage": "https://github.com/jomainqaq/autosota-codex#readme",
+  "homepage": "https://github.com/your-org/autosota#readme",
   "bugs": {
-    "url": "https://github.com/jomainqaq/autosota-codex/issues"
+    "url": "https://github.com/your-org/autosota/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jomainqaq/autosota-codex.git"
+    "url": "git+https://github.com/your-org/autosota.git"
   },
   "engines": {
     "node": ">=18"
