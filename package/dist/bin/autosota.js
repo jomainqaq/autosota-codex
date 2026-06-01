@@ -12,6 +12,7 @@ const RUN_SH = path.join(ROOT, "run.sh");
 const SHIM_DIR = path.join(ROOT, "codex-shim-bin");
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const DEFAULT_MODEL = "gpt-5.5";
+const { sessionsCmd, inspectCmd } = require("./sessions-inspect");
 
 function green(s) {
   return `\x1b[32m${s}\x1b[0m`;
@@ -275,6 +276,14 @@ function main() {
   }
   if (cmd === "init") {
     initCmd(args.slice(1));
+    return;
+  }
+  if (cmd === "sessions") {
+    sessionsCmd(args.slice(1), { workspacePaths, version: PKG.version });
+    return;
+  }
+  if (cmd === "inspect") {
+    inspectCmd(args.slice(1), { workspacePaths, version: PKG.version });
     return;
   }
   runLegacy(args);

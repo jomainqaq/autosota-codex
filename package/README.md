@@ -11,7 +11,7 @@ the subprocess `PATH`.
 ## Install
 
 ```bash
-npm install -g ./autosota-codex-0.2.1-codex.7.tgz
+npm install -g ./autosota-codex-0.2.1-codex.8.tgz
 codex login
 autosota doctor
 ```
