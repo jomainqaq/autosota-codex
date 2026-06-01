@@ -8,6 +8,18 @@ function bold(s) {
   return `\x1b[1m${s}\x1b[0m`;
 }
 
+function dim(s) {
+  return `\x1b[2m${s}\x1b[0m`;
+}
+
+function green(s) {
+  return `\x1b[32m${s}\x1b[0m`;
+}
+
+function yellow(s) {
+  return `\x1b[33m${s}\x1b[0m`;
+}
+
 function red(s) {
   return `\x1b[31m${s}\x1b[0m`;
 }
@@ -458,6 +470,43 @@ function pad(value, width) {
   return s.length >= width ? s : s + " ".repeat(width - s.length);
 }
 
+function visibleLength(value) {
+  return String(value).replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function padVisible(value, width) {
+  const s = String(value);
+  const len = visibleLength(s);
+  return len >= width ? s : s + " ".repeat(width - len);
+}
+
+function formatStartedMinute(value) {
+  return value ? value.slice(0, 16) : "";
+}
+
+function statusCell(status) {
+  if (status === "running") return `${yellow("⚡")} ${yellow("running")}`;
+  if (status === "complete") return `${green("✓")} ${green("complete")}`;
+  if (status === "empty") return `${dim("○")} ${dim("empty")}`;
+  if (status === "paused") return `${yellow("Ⅱ")} ${yellow("paused")}`;
+  return `${yellow("~")} ${yellow(status || "aborted")}`;
+}
+
+function deltaCell(value) {
+  const formatted = value === 0 ? "+0.00%" : formatPct(value);
+  if (formatted === "-") return "";
+  if (value > 0) return green(formatted);
+  if (value < 0) return red(formatted);
+  return dim(formatted);
+}
+
+function bestCell(summary) {
+  if (summary.best.value === null) return dim("—");
+  const best = Number(summary.best.value).toFixed(4);
+  const delta = deltaCell(improvementPct(summary.best.value, summary.baseline.value, summary.lowerIsBetter));
+  return delta ? `${best}  ${delta}` : best;
+}
+
 function runToJson(summary, latestName) {
   return {
     paper: summary.paperName,
@@ -508,17 +557,15 @@ function sessionsCmd(args, context = {}) {
     return;
   }
 
-  console.log(bold(`autosota sessions${context.version ? ` (v${context.version})` : ""}`));
-  console.log(`Workspace: ${workspace}`);
+  console.log(`${bold("autosota sessions")} ${dim(`(${workspace})`)}`);
   console.log("");
-  console.log(`${pad("run", 48)} ${pad("status", 9)} ${pad("progress", 13)} ${pad("best", 10)} delta`);
-  console.log(`${"-".repeat(48)} ${"-".repeat(9)} ${"-".repeat(13)} ${"-".repeat(10)} ${"-".repeat(10)}`);
+  console.log(bold(`  ${pad("Paper", 13)} ${pad("Run", 27)} ${pad("Started", 16)}   ${pad("Status", 15)} ${pad("Iters", 9)} Best (Δ vs baseline)`));
+  console.log(dim(`  ${"─".repeat(114)}`));
   for (const { summary, latestName } of rows) {
-    const label = `${summary.paperName}/${summary.runName}${summary.runName === latestName ? " (latest)" : ""}`;
+    const run = `${summary.runName}${summary.runName === latestName ? dim(" (latest)") : ""}`;
     const progressMax = summary.maxIterations === null ? "?" : String(summary.maxIterations);
-    const progress = `${summary.progressCount}/${progressMax}${summary.lastIter === null ? "" : ` iter ${summary.lastIter}`}`;
-    const delta = summary.best.value === null ? "-" : formatPct(improvementPct(summary.best.value, summary.baseline.value, summary.lowerIsBetter));
-    console.log(`${pad(label, 48)} ${pad(summary.status, 9)} ${pad(progress, 13)} ${pad(formatNumber(summary.best.value, 4), 10)} ${delta}`);
+    const progress = `${summary.progressCount}/${progressMax}`;
+    console.log(`  ${pad(summary.paperName, 13)} ${padVisible(run, 27)} ${pad(formatStartedMinute(summary.started), 16)}   ${padVisible(statusCell(summary.status), 15)} ${pad(progress, 9)} ${bestCell(summary)}`);
   }
 }
 
